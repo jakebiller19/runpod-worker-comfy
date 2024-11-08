@@ -3,12 +3,10 @@ FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 as base
 
 # Prevents prompts from packages asking for user input during installation
 ENV DEBIAN_FRONTEND=noninteractive
-# Prefer binary wheels over source distributions for faster pip installations
 ENV PIP_PREFER_BINARY=1
-# Ensures output from python is printed immediately to the terminal without buffering
 ENV PYTHONUNBUFFERED=1 
 
-# Install Python, git and other necessary tools
+# Install Python, git, and other necessary tools
 RUN apt-get update && apt-get install -y \
     python3.10 \
     python3-pip \
@@ -24,9 +22,10 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git /comfyui
 # Change working directory to ComfyUI
 WORKDIR /comfyui
 
-# Install ComfyUI dependencies
+# Install ComfyUI dependencies and additional required libraries
 RUN pip3 install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
-    && pip3 install --upgrade -r requirements.txt
+    && pip3 install --upgrade -r requirements.txt \
+    && pip3 install GitPython==3.1.32 einops==0.8.0 transformers diffusers sentencepiece opencv-python
 
 # Install runpod
 RUN pip3 install runpod requests
@@ -41,6 +40,14 @@ WORKDIR /
 ADD src/start.sh src/rp_handler.py test_input.json ./
 RUN chmod +x /start.sh
 
+# Clone and install x-flux-comfyui custom nodes
+RUN git clone https://github.com/XLabs-AI/x-flux-comfyui.git /comfyui/custom_nodes/x-flux-comfyui
+WORKDIR /comfyui/custom_nodes/x-flux-comfyui
+RUN python3 setup.py install
+
+# Return to root directory after setup
+WORKDIR /
+
 # Stage 2: Download models
 FROM base as downloader
 
@@ -50,7 +57,7 @@ ARG MODEL_TYPE
 # Change working directory to ComfyUI
 WORKDIR /comfyui
 
-# Download checkpoints/vae/LoRA to include in image based on model type
+# Download checkpoints/vae/LoRA based on model type
 RUN if [ "$MODEL_TYPE" = "sdxl" ]; then \
       wget -O models/checkpoints/sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors && \
       wget -O models/vae/sdxl_vae.safetensors https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors && \
@@ -68,6 +75,9 @@ RUN if [ "$MODEL_TYPE" = "sdxl" ]; then \
       wget -O models/clip/t5xxl_fp8_e4m3fn.safetensors https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors && \
       wget --header="Authorization: Bearer ${HUGGINGFACE_ACCESS_TOKEN}" -O models/vae/ae.safetensors https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors; \
     fi
+
+# Download upscale model 4x-UltraSharp from Hugging Face
+RUN wget -O models/upscale/4x-UltraSharp.pth https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth
 
 # Stage 3: Final image
 FROM base as final
